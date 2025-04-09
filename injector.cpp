@@ -169,9 +169,10 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
 #pragma endregion Резервирование памяти для DLL в целевом процессе
 
 #pragma region Запись всех заголовков DLL файла в зарезервированную память
-
+    /* Результат записи всех заголовков в зарезервированную память */
     int writeHeadersResult = WriteProcessMemory(hModule, pTargetVirtualAddr, pSrcData, pOldOptionalHeader->SizeOfHeaders, NULL);
 
+    // Если произошла ошибка во время записи данных
     if (writeHeadersResult == 0) {
         printf("Error when write headers to allocated memory - 0x%X\n", GetLastError());
         delete[] pSrcData;
@@ -180,10 +181,19 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
 
 #pragma endregion Запись всех заголовков DLL файла в зарезервированную память
 
+#pragma region Инициализациия MANUAL_MAPPING_DATA структуры
+
+    // Инициализация вспомогательной структуры
+    /* Вспомогательная структура с данными */
     MANUAL_MAPPING_DATA data{0};
+    // Присвоение ссылки на оригинальную функцию LoadLibraryW
     data.pLoadLibraryW = LoadLibraryW;
+    // Присвоение ссылки на оригинальную функцию GetProcAddress
     data.pGetProcAddress = GetProcAddress;
 
+#pragma endregion Инициализациия MANUAL_MAPPING_DATA структуры
+
+    /* Указатель на массив секций DLL файла */
     PIMAGE_SECTION_HEADER pSeactionHeader = IMAGE_FIRST_SECTION(pOldNtHeaders);
 
     return TRUE;
