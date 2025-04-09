@@ -168,8 +168,22 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
 
 #pragma endregion Резервирование памяти для DLL в целевом процессе
 
+
+    MANUAL_MAPPING_DATA data{0};
+    data.pLoadLibraryW = LoadLibraryW;
+    data.pGetProcAddress = GetProcAddress;
+
+    PIMAGE_SECTION_HEADER pSeactionHeader = IMAGE_FIRST_SECTION(pOldNtHeaders);
+
     return TRUE;
 }
+
+
+// for (UINT i = 0; i != pOldFileHeader->NumberOfSections; ++i, ++pSeactionHeader) {
+//     if (pSeactionHeader->SizeOfRawData) {
+//         if (!WriteProcessMemory(hModule, pTargetVirtualAddr + pSeactionHeader->VirtualAddress, pSrcData + pSeactionHeader->PointerToRawData, pSeactionHeader->SizeOfRawData, nullptr)) {
+//             printf("Error when writing memory - 0x%X\n", GetLastError());
+//             delete[] pSrcData;
 //             VirtualFreeEx(hModule, pTargetVirtualAddr, 0, MEM_RELEASE);
 //             return FALSE;
 //         }
