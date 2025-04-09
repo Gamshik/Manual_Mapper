@@ -91,6 +91,8 @@ BYTE* GetDllByteData(LPCWSTR lpDllFilePath) {
     return pSrcData;
 }
 
+void __stdcall ShellCode(MANUAL_MAPPING_DATA* data);
+
 BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
 #pragma region Загрузка DLL файла в бинарном формате
 
@@ -232,4 +234,152 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
     delete[] pSrcData;
 
     return TRUE;
+}
+
+void __stdcall ShellCode(MANUAL_MAPPING_DATA *data) {
+    if (!data)
+        return;
+
+#pragma region Инициализация переменных 
+
+    /* Указатель на адрес загруженной DLL */
+    BYTE* pBaseAddr = data->pBaseAddr;
+
+    /* DOS заголовок DLL файла */
+    PIMAGE_DOS_HEADER pDosHeader = reinterpret_cast<IMAGE_DOS_HEADER*>(pBaseAddr); 
+    /* PE заголовок DLL файла */ 
+    PIMAGE_NT_HEADERS pNtHeader = reinterpret_cast<IMAGE_NT_HEADERS*>(pBaseAddr + pDosHeader->e_lfanew);
+    /* Optional заголовок DLL файла  
+        @note Cодержит необходимую информацию для загрузки файла. */
+    PIMAGE_OPTIONAL_HEADER pOptHeader = reinterpret_cast<IMAGE_OPTIONAL_HEADER*>(&pNtHeader->OptionalHeader); 
+
+    /* Указатель на оригинальную функцию pLoadLibraryW */
+    auto _loadLibraryW = data->pLoadLibraryW;
+    /* Указатель на оригинальную функцию pGetProcAddress */
+    auto _getProcAddress = data->pGetProcAddress;
+
+    /* Указатель на функцию входа DLL - `DllMain` */
+    auto _dllEntryPoint = reinterpret_cast<f_DllMain>(pBaseAddr + pOptHeader->AddressOfEntryPoint);
+
+#pragma endregion Инициализация переменных
+
+#pragma region Релокация адресов в памяти
+
+   /* Смещение после внедрения DLL */
+   BYTE* locationDelta = pBaseAddr - pOptHeader->ImageBase;
+    
+   // Если смещение присутствует
+   if (locationDelta) {
+       // Если размер таблицы со смещениями равен 0
+       if (!pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size)
+           return;
+
+       /* Оффсет до таблицы смещений */
+       DWORD relocTableOffset = pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress;
+
+       /* Указатель на массив таблиц смещений */
+       PIMAGE_BASE_RELOCATION pRelocTable = reinterpret_cast<IMAGE_BASE_RELOCATION*>(pBaseAddr + relocTableOffset);
+       
+       // Перебор всех блоков
+       while (pRelocTable->VirtualAddress) {
+           /* Количество сущностей в таблице смещений */  // SizeOfBlock - размер всего блока, IMAGE_BASE_RELOCATION - заголовок блока, WORD - размер каждой сущности в блоке
+           UINT amountOfEntries = (pRelocTable->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD);
+           /* Указатель на массив с информацией о релокации сущностей в блоке 
+               @note Состоит из двух частей первая - `[ 4bit: type  ]`, вторая - `[ 12bit: offset ]`. */
+           PWORD pRelocInfo = reinterpret_cast<WORD*>(pRelocTable + 1);
+
+           // Перебор сущностей в блоке
+           for (UINT i = 0; i != amountOfEntries; ++i, ++pRelocInfo) {
+               if (RELOC_FLAG(*pRelocInfo)) {
+                   /* Указатель на адрес текущей сущности */                                               // Выдялем из информации только оффсет, занулив первые 4 бита (тип); 0x0FFF - 0000 1111 1111 1111
+                   PUINT_PTR pSrcAddr = reinterpret_cast<UINT_PTR*>(pBaseAddr + pRelocTable->VirtualAddress + ((*pRelocInfo) * 0x0FFF));
+                   // Смещаем сущность на оффсет
+                   *pSrcAddr += reinterpret_cast<UINT_PTR>(locationDelta);
+               }
+           }
+
+           // Смещаем на один блок
+           pRelocTable = reinterpret_cast<IMAGE_BASE_RELOCATION*>(reinterpret_cast<BYTE*>(pRelocTable) + pRelocTable->SizeOfBlock);
+       }
+   }
+
+#pragma endregion Релокация адресов в памяти
+
+#pragma region Исправление импортов
+
+    // Если таблица с импортами корректна
+    if (pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size) {
+        /* Оффсет до таблицы импортов */
+        DWORD importTableOffset = pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
+
+        /* Указатель на массив таблиц импортов для каждой DLL  */
+        PIMAGE_IMPORT_DESCRIPTOR pImportTable = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(pBaseAddr + importTableOffset);
+
+        // Перебор всех таблиц импортов для каждой DLL
+        while (pImportTable->Name) {
+            /* Имя импортируемой DLL */
+            wchar_t* importedDllName = reinterpret_cast<wchar_t*>(pBaseAddr + pImportTable->Name);
+            /* Дескриптор DLL */
+            HMODULE hDll = _loadLibraryW(importedDllName);
+
+            /* Указатель на начало таблицы ILT */
+            PULONG_PTR pThunkRef = reinterpret_cast<ULONG_PTR*>(pBaseAddr + pImportTable->OriginalFirstThunk);
+            /* Указатель на начало таблицы IAT */
+            PULONG_PTR pFuncRef = reinterpret_cast<ULONG_PTR*>(pBaseAddr + pImportTable->FirstThunk);
+
+            // Если импорты уже решены, нужно удостовериться, что будут перебираться все существующие импорты
+            // Иногда импорты могут быть уже решены: статическая линковка или до этого обработалось,
+            // в таком случае всё равно нужно перебрать все импорты, чтобы присвоить актуальные адреса,
+            // только нужно по-другому обрабатывать, что предусмотрено в цикле
+            if (!pThunkRef)
+                pThunkRef = pFuncRef;
+
+            // Перебор всех импортов
+            for (; *pThunkRef; ++pThunkRef, ++pFuncRef) {
+                // Если импорт представляет собой адрес (сущность из IAT)
+                if (IMAGE_SNAP_BY_ORDINAL(*pThunkRef)) {
+                    // Обновляется адресс на импорт 
+                    *pFuncRef = (ULONG_PTR)_getProcAddress(hDll, reinterpret_cast<char*>(*pThunkRef & 0xFFFF));
+                    
+                // Если импорт представляет собой имя (сущность из ILT)
+                } else {
+                    // Указатель на структуру с именем функции
+                    PIMAGE_IMPORT_BY_NAME pImportByName = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(pBaseAddr + (*pThunkRef));
+                    // Обновляется адресс на импорт 
+                    *pFuncRef = (ULONG_PTR)_getProcAddress(hDll, pImportByName->Name);
+                }
+            }
+        }
+    }
+
+#pragma endregion Исправление импортов
+
+#pragma region Вызов TLS callback функций
+
+    // Если данные с TLS корректны
+    if (pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].Size) {
+        /* Оффсет до TLS директории */
+        DWORD tlsDirectoryOffset = pOptHeader->DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress;
+
+        /* Указатель на TLS директорию */
+        PIMAGE_TLS_DIRECTORY pTLS = reinterpret_cast<IMAGE_TLS_DIRECTORY*>(pBaseAddr + tlsDirectoryOffset);
+
+        /* Указатель на массив с TLS колбэками */
+        PIMAGE_TLS_CALLBACK* pCallBack = reinterpret_cast<PIMAGE_TLS_CALLBACK*>(pBaseAddr + pTLS->AddressOfCallBacks);
+
+        // Вызов всех TLS колбэков
+        for (; pCallBack && *pCallBack; ++pCallBack) {
+            (*pCallBack)(pBaseAddr, DLL_PROCESS_ATTACH, nullptr);
+        }
+    }
+
+#pragma endregion Вызов TLS callback функций
+
+#pragma region Вызов DllMain
+
+    _dllEntryPoint(pBaseAddr, DLL_PROCESS_ATTACH, nullptr);
+
+#pragma endregion Вызов DllMain
+
+    return;
 }
