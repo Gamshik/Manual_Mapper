@@ -168,6 +168,17 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
 
 #pragma endregion Резервирование памяти для DLL в целевом процессе
 
+#pragma region Запись всех заголовков DLL файла в зарезервированную память
+
+    int writeHeadersResult = WriteProcessMemory(hModule, pTargetVirtualAddr, pSrcData, pOldOptionalHeader->SizeOfHeaders, NULL);
+
+    if (writeHeadersResult == 0) {
+        printf("Error when write headers to allocated memory - 0x%X\n", GetLastError());
+        delete[] pSrcData;
+        return FALSE;
+    }
+
+#pragma endregion Запись всех заголовков DLL файла в зарезервированную память
 
     MANUAL_MAPPING_DATA data{0};
     data.pLoadLibraryW = LoadLibraryW;
@@ -177,15 +188,3 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
 
     return TRUE;
 }
-
-
-// for (UINT i = 0; i != pOldFileHeader->NumberOfSections; ++i, ++pSeactionHeader) {
-//     if (pSeactionHeader->SizeOfRawData) {
-//         if (!WriteProcessMemory(hModule, pTargetVirtualAddr + pSeactionHeader->VirtualAddress, pSrcData + pSeactionHeader->PointerToRawData, pSeactionHeader->SizeOfRawData, nullptr)) {
-//             printf("Error when writing memory - 0x%X\n", GetLastError());
-//             delete[] pSrcData;
-//             VirtualFreeEx(hModule, pTargetVirtualAddr, 0, MEM_RELEASE);
-//             return FALSE;
-//         }
-//     }
-// }
