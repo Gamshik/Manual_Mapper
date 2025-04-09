@@ -17,6 +17,7 @@ struct MANUAL_MAPPING_DATA {
     HINSTANCE           hMod;
     f_LoadLibraryW      pLoadLibraryW;
     f_GetProcAddress    pGetProcAddress;
+    BYTE*               pBaseAddr;
 };
 
 /* Ищет PID по имени процесса.
