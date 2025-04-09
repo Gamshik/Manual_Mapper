@@ -172,7 +172,7 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
     /* Результат записи всех заголовков в зарезервированную память */
     int writeHeadersResult = WriteProcessMemory(hModule, pTargetVirtualAddr, pSrcData, pOldOptionalHeader->SizeOfHeaders, NULL);
 
-    // Если произошла ошибка во время записи данных
+    // Если произошла ошибка во время записи заголовков
     if (writeHeadersResult == 0) {
         printf("Error when write headers to allocated memory - 0x%X\n", GetLastError());
         delete[] pSrcData;
@@ -193,8 +193,38 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
 
 #pragma endregion Инициализациия MANUAL_MAPPING_DATA структуры
 
+#pragma region Запись всех секций DLL файла в зарезервированную память
+
     /* Указатель на массив секций DLL файла */
     PIMAGE_SECTION_HEADER pSeactionHeader = IMAGE_FIRST_SECTION(pOldNtHeaders);
+
+    for (int i = 0; i != pOldFileHeader->NumberOfSections; ++i, ++pSeactionHeader) {
+        if (pSeactionHeader->SizeOfRawData == 0) continue;
+
+        /* Результат записи секции в зарезервированную память */
+        int resultWriteSection = WriteProcessMemory(
+            hModule,
+            pTargetVirtualAddr + pSeactionHeader->VirtualAddress,
+            pSrcData + pSeactionHeader->PointerToRawData,
+            pSeactionHeader->SizeOfRawData,
+            NULL
+        );
+
+        // Если произошла ошибка во время записи секции
+        if (resultWriteSection == 0) {
+            printf("Error when write section to allocated memory - 0x%X\n", GetLastError());
+            
+            // Очистка памяти
+            VirtualFreeEx(hModule, pTargetVirtualAddr, 0, MEM_RELEASE);
+
+            delete[] pSrcData;
+            delete[] pSeactionHeader;
+
+            return FALSE;
+        }
+    }
+    
+#pragma endregion Запись всех секций DLL файла в зарезервированную память
 
     return TRUE;
 }
