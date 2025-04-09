@@ -11,7 +11,7 @@ const DWORD MZ_SIGNATURE = 0x5A4D;
 
 using f_LoadLibraryW = HMODULE (WINAPI *)(LPCWSTR lpLibFileName);
 using f_GetProcAddress = FARPROC (WINAPI*)(HMODULE hMODULE, LPCSTR lpProcName);
-using f_DllMain = BOOL (WINAPI*)(HINSTANCE hinstDll, DWORD fDwReason, LPVOID lpvReserved);
+using f_DllMain = BOOL (WINAPI*)(void* hinstDll, DWORD fDwReason, LPVOID lpvReserved);
 
 struct MANUAL_MAPPING_DATA {
     HINSTANCE           hMod;
