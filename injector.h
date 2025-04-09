@@ -6,6 +6,15 @@
 #include <iostream>
 #include <tlhelp32.h>
 
+#define RELOC_FLAG32(relInfo) ((relInfo >> 0x0C) == IMAGE_REL_BASED_HIGHLOW)
+#define RELOC_FLAG64(relInfo) ((relInfo >>0x0C) == IMAGE_REL_BASED_DIR64)
+
+#ifdef _WIN64
+    #define RELOC_FLAG RELOC_FLAG64
+#else
+    #define RELOC_FLAG RELOC_FLAG32
+#endif
+
 /* Стандартная сигнатура файла PE файла */
 const DWORD MZ_SIGNATURE = 0x5A4D;
 
