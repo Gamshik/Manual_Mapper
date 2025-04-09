@@ -42,3 +42,51 @@ DWORD GetPIDByProcessName(LPCWSTR procNmae) {
 
     return -1;
 }
+
+BYTE* GetDllByteData(LPCWSTR lpDllFilePath) {
+    // Если не верный путь к файлу или ошибка при извлечении аттрибутов
+    if (GetFileAttributesW(lpDllFilePath) == INVALID_FILE_ATTRIBUTES) {
+        printf("Dll file is wrong.\n");
+        return NULL;
+    }
+
+    /* Поток для чтения DLL файла в бинарном формате */
+    ifstream dllBinaryFile(lpDllFilePath, ios::binary | ios::ate); 
+
+    // Если произошла ошибка при чтении файла
+    if (dllBinaryFile.fail()) {
+        printf("Fail when open dll file.\n");
+        dllBinaryFile.close();
+        return NULL;
+    }
+
+    // tellg - возвращает текущую позицию, но так как курсор стоит в конце файла (ios::ate), можно сказать, что мы получаем размер файла 
+    /* Размер DLL файла */  
+    streampos fileSize = dllBinaryFile.tellg();
+    
+    // Если файл слишком маленький (меньше 1000 байт)
+    if (fileSize < 0x1000) {
+        printf("Dll file is too small.\n");
+        dllBinaryFile.close();
+        return NULL;
+    }
+
+    /* Указатель на массив байт DLL файла */
+    BYTE* pSrcData = new BYTE[static_cast<UINT_PTR>(fileSize)];
+
+    // Если произошла ошибка при инициализации массива
+    if (pSrcData == NULL) {
+        printf("Error when creating dll file data array\n");
+        dllBinaryFile.close();
+        return NULL;
+    }
+
+    // Ставит курсор на оффсет 0 от начала файла
+    dllBinaryFile.seekg(0, ios::beg);
+    // Записывает содержимое файла в массив pSrcData
+    dllBinaryFile.read(reinterpret_cast<char*>(pSrcData), fileSize);
+    // Закрывает поток
+    dllBinaryFile.close();
+
+    return pSrcData;
+}
