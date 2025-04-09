@@ -90,3 +90,88 @@ BYTE* GetDllByteData(LPCWSTR lpDllFilePath) {
 
     return pSrcData;
 }
+
+BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
+#pragma region Загрузка DLL файла в бинарном формате
+
+    /* Указатель на массив байт DLL файла */
+    BYTE* pSrcData = GetDllByteData(lpDllFilePath);
+
+    // Если произошла ошибка во время считывания данных
+    if (pSrcData == NULL) {
+        printf("Erorr when load binary data from DLL\n");
+        return FALSE;
+    }
+
+    #pragma endregion
+
+#pragma region Разбор DLL файла по структурам данных
+
+    /* DOS заголовок DLL файла */
+    IMAGE_DOS_HEADER* pDosHeader = reinterpret_cast<IMAGE_DOS_HEADER*>(pSrcData);
+
+    // Если сигнатура файла не совпадает с MZ сигнатурой (стандарт)
+    if (pDosHeader->e_magic != MZ_SIGNATURE) {
+        printf("File signature is wrong\n");
+        delete[] pSrcData;
+        return FALSE;
+    }
+
+    /* PE заголовок DLL файла */            // PE заголовок расположен с оффсетом e_lfanew от начала файла
+    IMAGE_NT_HEADERS* pOldNtHeaders = reinterpret_cast<IMAGE_NT_HEADERS*>(pSrcData + pDosHeader->e_lfanew);
+    /* Optional заголовок DLL файла  
+        @note Cодержит необходимую информацию для загрузки файла*/
+    IMAGE_OPTIONAL_HEADER* pOldOptionalHeader = &pOldNtHeaders->OptionalHeader;
+    /* Заголовки файла
+        @note Базовые характеристики файла */
+    IMAGE_FILE_HEADER* pOldFileHeader = &pOldNtHeaders->FileHeader;
+
+#pragma endregion Разбор DLL файла по структурам данных
+
+#pragma region Проверка совместимости с x64 и x86 архитектурами
+
+#ifdef _WIN64
+    if(pOldFileHeader->Machine != IMAGE_FILE_MACHINE_AMD64) {
+        printf("Invalid platform\n");
+        delete[] pSrcData;
+        return FALSE;
+    }
+#else
+    if(pOldFileHeader->Machine != IMAGE_FILE_MACHINE_I386) {
+        printf("Invalid platform\n");
+        delete[] pSrcData;
+        return FALSE;
+    }
+#endif
+
+#pragma endregion Проверка совместимости с x64 и x86 архитектурами
+
+#pragma region Резервирование памяти для DLL в целевом процессе
+
+    /* Указатель на зарезервированный для DLL адрес в памяти */
+    BYTE* pTargetVirtualAddr = reinterpret_cast<BYTE*>(
+        VirtualAllocEx(
+            hModule, 
+            nullptr, 
+            pOldOptionalHeader->SizeOfImage, 
+            MEM_COMMIT | MEM_RESERVE, 
+            PAGE_EXECUTE_READWRITE
+        )
+    );
+
+    // Если произошла ошибка при резервировании памяти
+    if (pTargetVirtualAddr == NULL) {
+        printf("Error when allocation memory - 0x%X\n", GetLastError());
+        delete[] pSrcData;
+        return FALSE;
+    }
+
+#pragma endregion Резервирование памяти для DLL в целевом процессе
+
+    return TRUE;
+}
+//             VirtualFreeEx(hModule, pTargetVirtualAddr, 0, MEM_RELEASE);
+//             return FALSE;
+//         }
+//     }
+// }
