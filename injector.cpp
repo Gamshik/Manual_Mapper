@@ -225,8 +225,147 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
     
 #pragma endregion Запись всех секций DLL файла в зарезервированную память
 
+#pragma region Резервирование памяти для MANUAL_MAPPING_DATA структуры
+
+    /* Указатель на выделеннюу для структуры MANUAL_MAPPING_DATA память */
+    PBYTE pDataAddr = reinterpret_cast<PBYTE>(
+        VirtualAllocEx(
+            hModule, 
+            nullptr, 
+            sizeof(data), 
+            MEM_COMMIT | MEM_RESERVE, 
+            PAGE_EXECUTE_READWRITE
+        )
+    );
+
+    /* Если при выделении памяти возникла ошибка */
+    if (pDataAddr == NULL) {
+        printf("Error when allocated memory for data - 0x%X\n", GetLastError());
+        VirtualFreeEx(hModule, pBaseAddr, 0, MEM_RELEASE);
+        delete[] pSrcData;
+        delete[] pSectionHeader;
+        return FALSE;
+    }
+    
+#pragma endregion Резервирование памяти для MANUAL_MAPPING_DATA структуры
+
+#pragma region Запись MANUAL_MAPPING_DATA в память
+
+    /* Результат записи MANUAL_MAPPING_DATA  в память */
+    BOOL dataWriteMemoryResult = WriteProcessMemory(hModule, pDataAddr, &data, sizeof(data), NULL);
+
+    // Если возникла ошибка при записи в память
+    if (dataWriteMemoryResult == 0) {
+        printf("Error when write data to memory - 0x%X\n", GetLastError());
+        VirtualFreeEx(hModule, pBaseAddr, 0, MEM_RELEASE);
+        VirtualFreeEx(hModule, pDataAddr, 0, MEM_RELEASE);
+        return FALSE;
+    }
+
+#pragma endregion Запись MANUAL_MAPPING_DATA в память
+
     // Очистка памяти, так как больше не пригодится, все данные записаны в зарезервированную память
     delete[] pSrcData;
+
+#pragma region Резервирование памяти для функции ShellCode
+
+    /* Указатель на адрес выделенной памяти для функции ShellCode */
+    PBYTE pShellCodeAddr = reinterpret_cast<PBYTE>(
+        VirtualAllocEx(
+            hModule,
+            nullptr,
+            MEMORY_SIZE_OF_PAGE, // 0x1000 - 4096byte - размер одной страницы 
+            MEM_COMMIT | MEM_RESERVE,
+            PAGE_EXECUTE_READWRITE
+        )
+    );
+
+    // Если возникла ошибка при выделении памяти
+    if (pShellCodeAddr == NULL) {
+        printf("Error when allocate memory for shell code - 0x%X\n", GetLastError());
+        VirtualFreeEx(hModule, pBaseAddr, 0, MEM_RELEASE);
+        VirtualFreeEx(hModule, pDataAddr, 0, MEM_RELEASE);
+        return FALSE;
+    }
+
+#pragma endregion Резервирование памяти для функции ShellCode
+
+#pragma region Запись ShellCode в память
+
+    /* Результат записи функции ShellCode в память */
+    BOOL shellCodeWriteMemoryResult = 
+        WriteProcessMemory(
+            hModule,
+            pShellCodeAddr,
+            reinterpret_cast<LPCVOID>(ShellCode),
+            MEMORY_SIZE_OF_PAGE,
+            NULL
+        ); 
+
+    // Если возникла ошибка при записи в память
+    if (shellCodeWriteMemoryResult == 0) {
+        printf("Error when write shellcode to memory - 0x%X\n", GetLastError());
+        VirtualFreeEx(hModule, pBaseAddr, 0, MEM_RELEASE);
+        VirtualFreeEx(hModule, pDataAddr, 0, MEM_RELEASE);
+        VirtualFreeEx(hModule, pShellCodeAddr, 0, MEM_RELEASE);
+        return FALSE;
+    }
+
+#pragma endregion Запись ShellCode в память
+
+#pragma region Вызов ShellCode 
+
+    /* Дескриптор потока */
+    HANDLE hThread = CreateRemoteThread(
+        hModule, 
+        nullptr, 
+        0, 
+        reinterpret_cast<LPTHREAD_START_ROUTINE>(pShellCodeAddr),
+        pDataAddr,
+        0,
+        NULL
+    );
+
+    // Если произошла ошибка при создании потока
+    if (hThread == NULL) {
+        printf("Error when create thread for shell code - 0x%X", GetLastError());
+        VirtualFreeEx(hModule, pShellCodeAddr, 0, MEM_RELEASE);
+        VirtualFreeEx(hModule, pDataAddr, 0, MEM_RELEASE);
+        VirtualFreeEx(hModule, pBaseAddr, 0, MEM_RELEASE);
+        return FALSE;
+    }
+
+    // Закрытие дескриптора потока
+    CloseHandle(hThread);
+
+#pragma endregion Вызов ShellCode 
+
+#pragma region Ожидание успешного завершения ShellCode
+
+    /* Переменная для проверки успешности вызова ShellCode */
+    HINSTANCE hCheck = NULL;
+
+    // Пока hCheck не будет присвоено значение
+    while (hCheck == NULL) {
+        /* Структура данных для проверки */
+        MANUAL_MAPPING_DATA dataChecker { 0 };
+
+        // Cчитывание структуры данных
+        ReadProcessMemory(hModule, pDataAddr, &dataChecker, sizeof(MANUAL_MAPPING_DATA), NULL);
+        
+        // Присвоение значения hMod 
+        // (в конце функции ShellCode данному полю присваивается значение отличное от NULL)
+        hCheck = dataChecker.hMod;
+        
+        Sleep(1000);
+    }
+
+#pragma endregion Ожидание успешного завершения ShellCode
+
+    // Очистка памяти
+    VirtualFreeEx(hModule, pShellCodeAddr, 0, MEM_RELEASE);
+    VirtualFreeEx(hModule, pBaseAddr, 0, MEM_RELEASE);
+    VirtualFreeEx(hModule, pDataAddr, 0, MEM_RELEASE);
 
     return TRUE;
 }
