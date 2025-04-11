@@ -19,6 +19,9 @@
 const DWORD MZ_SIGNATURE = 0x5A4D;
 
 using f_LoadLibraryW = HMODULE (WINAPI *)(LPCWSTR lpLibFileName);
+/* Размер одной страницы в памяти */
+const DWORD MEMORY_SIZE_OF_PAGE = 0x1000;
+
 using f_GetProcAddress = FARPROC (WINAPI*)(HMODULE hMODULE, LPCSTR lpProcName);
 using f_DllMain = BOOL (WINAPI*)(void* hinstDll, DWORD fDwReason, LPVOID lpvReserved);
 
@@ -28,6 +31,8 @@ struct MANUAL_MAPPING_DATA {
     f_GetProcAddress    pGetProcAddress;
     BYTE*               pBaseAddr;
 };
+
+typedef MANUAL_MAPPING_DATA *PMANUAL_MAPPING_DATA;
 
 /* Ищет PID по имени процесса.
     @param procNmae(LPCWSTR) имя процесса.
@@ -39,7 +44,7 @@ DWORD GetPIDByProcessName(LPCWSTR procNmae);
     @param lpDllFilePath(LPCWSTR) путь к DLL файлу.
 
     @return Если успешно - `указатель на массив считанных байт`. В ином случае - `NULL`. */
-BYTE* GetDllByteData(LPCWSTR lpDllFilePath);
+PBYTE GetDllByteData(LPCWSTR lpDllFilePath);
 
 /* Мапит DLL в указанный процесс
     @param hModule(HANDLE) дескриптор процесса, в который нужно встроить DLL.
@@ -47,5 +52,10 @@ BYTE* GetDllByteData(LPCWSTR lpDllFilePath);
     
     @return Если успешно - `TRUE`. В ином случае - `FALSE`.*/
 BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath);
+
+/* Выполняется внутри процесса и делает все необходимые действия для запуска DLL в выполняемом прцоессе.
+    @param data(PMANUAL_MAPPING_DATA) указатель на данные для маппинга в памяти
+*/
+void __stdcall ShellCode(PMANUAL_MAPPING_DATA data);
 
 #endif // !INJECTOR_H

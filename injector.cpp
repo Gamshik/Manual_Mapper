@@ -91,8 +91,6 @@ BYTE* GetDllByteData(LPCWSTR lpDllFilePath) {
     return pSrcData;
 }
 
-void __stdcall ShellCode(MANUAL_MAPPING_DATA* data);
-
 BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
 #pragma region Загрузка DLL файла в бинарном формате
 
