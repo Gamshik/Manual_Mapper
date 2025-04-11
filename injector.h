@@ -18,16 +18,16 @@
 /* Стандартная сигнатура файла PE файла */
 const DWORD MZ_SIGNATURE = 0x5A4D;
 
-using f_LoadLibraryW = HMODULE (WINAPI *)(LPCWSTR lpLibFileName);
 /* Размер одной страницы в памяти */
 const DWORD MEMORY_SIZE_OF_PAGE = 0x1000;
 
+using f_LoadLibraryA = HMODULE (WINAPI *)(LPCSTR lpLibFileName);
 using f_GetProcAddress = FARPROC (WINAPI*)(HMODULE hMODULE, LPCSTR lpProcName);
 using f_DllMain = BOOL (WINAPI*)(void* hinstDll, DWORD fDwReason, LPVOID lpvReserved);
 
 struct MANUAL_MAPPING_DATA {
     HINSTANCE           hMod;
-    f_LoadLibraryW      pLoadLibraryW;
+    f_LoadLibraryA      pLoadLibraryA;
     f_GetProcAddress    pGetProcAddress;
     BYTE*               pBaseAddr;
 };

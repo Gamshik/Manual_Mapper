@@ -251,8 +251,8 @@ void __stdcall ShellCode(MANUAL_MAPPING_DATA *data) {
         @note Cодержит необходимую информацию для загрузки файла. */
     PIMAGE_OPTIONAL_HEADER pOptHeader = reinterpret_cast<IMAGE_OPTIONAL_HEADER*>(&pNtHeader->OptionalHeader); 
 
-    /* Указатель на оригинальную функцию pLoadLibraryW */
-    auto _loadLibraryW = data->pLoadLibraryW;
+    /* Указатель на оригинальную функцию pLoadLibraryA */
+    auto _loadLibraryA = data->pLoadLibraryA;
     /* Указатель на оригинальную функцию pGetProcAddress */
     auto _getProcAddress = data->pGetProcAddress;
 
@@ -316,9 +316,10 @@ void __stdcall ShellCode(MANUAL_MAPPING_DATA *data) {
         // Перебор всех таблиц импортов для каждой DLL
         while (pImportTable->Name) {
             /* Имя импортируемой DLL */
-            wchar_t* importedDllName = reinterpret_cast<wchar_t*>(pBaseAddr + pImportTable->Name);
+            char* importedDllName = reinterpret_cast<char*>(pBaseAddr + pImportTable->Name);
+            
             /* Дескриптор DLL */
-            HMODULE hDll = _loadLibraryW(importedDllName);
+            HMODULE hDll = _loadLibraryA(importedDllName);
 
             /* Указатель на начало таблицы ILT */
             PULONG_PTR pThunkRef = reinterpret_cast<ULONG_PTR*>(pBaseAddr + pImportTable->OriginalFirstThunk);
