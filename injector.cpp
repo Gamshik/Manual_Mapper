@@ -43,7 +43,7 @@ DWORD GetPIDByProcessName(LPCWSTR procNmae) {
     return -1;
 }
 
-BYTE* GetDllByteData(LPCWSTR lpDllFilePath) {
+PBYTE GetDllByteData(LPCWSTR lpDllFilePath) {
     // Если не верный путь к файлу или ошибка при извлечении аттрибутов
     if (GetFileAttributesW(lpDllFilePath) == INVALID_FILE_ATTRIBUTES) {
         printf("Dll file is wrong.\n");
@@ -72,7 +72,7 @@ BYTE* GetDllByteData(LPCWSTR lpDllFilePath) {
     }
 
     /* Указатель на массив байт DLL файла */
-    BYTE* pSrcData = new BYTE[static_cast<UINT_PTR>(fileSize)];
+    PBYTE pSrcData = new BYTE[static_cast<UINT_PTR>(fileSize)];
 
     // Если произошла ошибка при инициализации массива
     if (pSrcData == NULL) {
@@ -95,7 +95,7 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
 #pragma region Загрузка DLL файла в бинарном формате
 
     /* Указатель на массив байт DLL файла */
-    BYTE* pSrcData = GetDllByteData(lpDllFilePath);
+    PBYTE pSrcData = GetDllByteData(lpDllFilePath);
 
     // Если произошла ошибка во время считывания данных
     if (pSrcData == NULL) {
@@ -103,12 +103,12 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
         return FALSE;
     }
 
-    #pragma endregion
+#pragma endregion Загрузка DLL файла в бинарном формате
 
 #pragma region Разбор DLL файла по структурам данных
 
     /* DOS заголовок DLL файла */
-    IMAGE_DOS_HEADER* pDosHeader = reinterpret_cast<IMAGE_DOS_HEADER*>(pSrcData);
+    PIMAGE_DOS_HEADER pDosHeader = reinterpret_cast<PIMAGE_DOS_HEADER>(pSrcData);
 
     // Если сигнатура файла не совпадает с MZ сигнатурой (стандарт)
     if (pDosHeader->e_magic != MZ_SIGNATURE) {
@@ -118,13 +118,13 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
     }
 
     /* PE заголовок DLL файла */            // PE заголовок расположен с оффсетом e_lfanew от начала файла
-    IMAGE_NT_HEADERS* pOldNtHeaders = reinterpret_cast<IMAGE_NT_HEADERS*>(pSrcData + pDosHeader->e_lfanew);
+    PIMAGE_NT_HEADERS pOldNtHeaders = reinterpret_cast<PIMAGE_NT_HEADERS>(pSrcData + pDosHeader->e_lfanew);
     /* Optional заголовок DLL файла  
         @note Cодержит необходимую информацию для загрузки файла*/
-    IMAGE_OPTIONAL_HEADER* pOldOptionalHeader = &pOldNtHeaders->OptionalHeader;
+    PIMAGE_OPTIONAL_HEADER pOldOptionalHeader = &pOldNtHeaders->OptionalHeader;
     /* Заголовки файла
         @note Базовые характеристики файла */
-    IMAGE_FILE_HEADER* pOldFileHeader = &pOldNtHeaders->FileHeader;
+    PIMAGE_FILE_HEADER pOldFileHeader = &pOldNtHeaders->FileHeader;
 
 #pragma endregion Разбор DLL файла по структурам данных
 
@@ -149,10 +149,10 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
 #pragma region Резервирование памяти для DLL в целевом процессе
 
     /* Указатель на зарезервированный для DLL адрес в памяти */
-    BYTE* pBaseAddr = reinterpret_cast<BYTE*>(
+    PBYTE pBaseAddr = reinterpret_cast<PBYTE>(
         VirtualAllocEx(
             hModule, 
-            nullptr, 
+            reinterpret_cast<LPVOID>(pOldOptionalHeader->ImageBase), 
             pOldOptionalHeader->SizeOfImage, 
             MEM_COMMIT | MEM_RESERVE, 
             PAGE_EXECUTE_READWRITE
@@ -174,7 +174,7 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
     /* Вспомогательная структура с данными */
     MANUAL_MAPPING_DATA data{0};
     // Присвоение ссылки на оригинальную функцию LoadLibraryW
-    data.pLoadLibraryW = LoadLibraryW;
+    data.pLoadLibraryA = LoadLibraryA;
     // Присвоение ссылки на оригинальную функцию GetProcAddress
     data.pGetProcAddress = GetProcAddress;
     // Присвоение ссылки на зарезервированную память
@@ -184,12 +184,13 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
 
 #pragma region Запись всех заголовков DLL файла в зарезервированную память
     /* Результат записи всех заголовков в зарезервированную память */
-    int writeHeadersResult = WriteProcessMemory(hModule, pBaseAddr, pSrcData, pOldOptionalHeader->SizeOfHeaders, NULL);
+    BOOL writeHeadersResult = WriteProcessMemory(hModule, pBaseAddr, pSrcData, pOldOptionalHeader->SizeOfHeaders, NULL);
 
     // Если произошла ошибка во время записи заголовков
     if (writeHeadersResult == 0) {
-        printf("Error when write headers to allocated memory - 0x%X\n", GetLastError());
+        printf("Error when write headers to allocated memory - 0x%X\n", GetLastError());       
         delete[] pSrcData;
+        VirtualFreeEx(hModule, pBaseAddr, 0, MEM_RELEASE);
         return FALSE;
     }
 
@@ -198,30 +199,26 @@ BOOL ManualMap(HANDLE hModule, LPCWSTR lpDllFilePath) {
 #pragma region Запись всех секций DLL файла в зарезервированную память
 
     /* Указатель на массив секций DLL файла */
-    PIMAGE_SECTION_HEADER pSeactionHeader = IMAGE_FIRST_SECTION(pOldNtHeaders);
+    PIMAGE_SECTION_HEADER pSectionHeader = IMAGE_FIRST_SECTION(pOldNtHeaders);
 
-    for (int i = 0; i != pOldFileHeader->NumberOfSections; ++i, ++pSeactionHeader) {
-        if (pSeactionHeader->SizeOfRawData == 0) continue;
+    for (int i = 0; i != pOldFileHeader->NumberOfSections; ++i, ++pSectionHeader) {
+        if (pSectionHeader->SizeOfRawData == 0) continue;
 
         /* Результат записи секции в зарезервированную память */
-        int resultWriteSection = WriteProcessMemory(
+        BOOL resultWriteSection = WriteProcessMemory(
             hModule,
-            pBaseAddr + pSeactionHeader->VirtualAddress,
-            pSrcData + pSeactionHeader->PointerToRawData,
-            pSeactionHeader->SizeOfRawData,
+            pBaseAddr + pSectionHeader->VirtualAddress,
+            pSrcData + pSectionHeader->PointerToRawData,
+            pSectionHeader->SizeOfRawData,
             NULL
         );
 
         // Если произошла ошибка во время записи секции
         if (resultWriteSection == 0) {
             printf("Error when write section to allocated memory - 0x%X\n", GetLastError());
-            
-            // Очистка памяти
             VirtualFreeEx(hModule, pBaseAddr, 0, MEM_RELEASE);
-
             delete[] pSrcData;
-            delete[] pSeactionHeader;
-
+            delete[] pSectionHeader;
             return FALSE;
         }
     }
